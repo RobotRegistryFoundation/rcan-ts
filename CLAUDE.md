@@ -20,7 +20,7 @@ rcan-ts/
 ├── src/
 │   ├── message.ts      # RCANMessage class, MessageType enum, validation
 │   ├── identity.ts     # LevelOfAssurance, LoaPolicy, validateLoaForScope
-│   ├── version.ts      # SPEC_VERSION = "1.6.1", SDK_VERSION = "0.6.0"
+│   ├── version.ts      # SPEC_VERSION = "3.2", SDK_VERSION = "3.4.2"
 │   ├── uri.ts          # RobotURI — parse/validate rcan:// URIs
 │   ├── federation.ts   # Federation sync and peer validation
 │   ├── consent.ts      # Cross-robot consent protocol
@@ -32,18 +32,20 @@ rcan-ts/
 │   ├── identity.test.ts   # LoA enforcement, scope validation
 │   ├── federation.test.ts # Federation protocol tests
 │   └── ...                # 25 test suites
-├── package.json        # version: "0.6.0"
+├── package.json        # name: "rcan-ts", version: "3.4.2"
 └── tsconfig.json
 ```
 
 ## Key Constants
 
 ```typescript
-import { MessageType, SPEC_VERSION, SDK_VERSION } from 'rcan';
+import { MessageType, SPEC_VERSION, SDK_VERSION } from 'rcan-ts';
 
-SPEC_VERSION  // "1.6.1" — tracks current stable spec version
-SDK_VERSION   // "0.6.0"
+SPEC_VERSION  // "3.2" — tracks current stable spec version
+SDK_VERSION   // "3.4.2"
 ```
+
+The published npm package is `rcan-ts` (NOT `@continuonai/rcan`, which 404s).
 
 ## Running Tests
 
