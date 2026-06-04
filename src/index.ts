@@ -3,7 +3,7 @@
  * Robot Communication and Accountability Network
  *
  * @see https://rcan.dev
- * @see https://github.com/continuonai/rcan-ts
+ * @see https://github.com/RobotRegistryFoundation/rcan-ts
  */
 
 export { RobotURI, RobotURIError } from "./address.js";
