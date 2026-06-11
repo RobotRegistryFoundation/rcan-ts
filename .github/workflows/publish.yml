@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       publish_npm:
-        description: "Publish to npm (requires NPM_TOKEN secret)"
+        description: "Publish to npm (OIDC trusted publishing — no NPM_TOKEN needed)"
         required: true
         type: boolean
         default: false
@@ -77,7 +77,7 @@ jobs:
       - name: Strip leading v from tag
         run: echo "VALUE=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
 
-      - uses: continuonai/rcan-spec/.github/actions/emit-version-tuple@v3.2.3
+      - uses: RobotRegistryFoundation/rcan-spec/.github/actions/emit-version-tuple@v3.2.3
         with:
           project: rcan-ts
           ran: ${{ secrets.RCAN_TS_RELEASE_RAN }}
@@ -91,24 +91,28 @@ jobs:
           release_tag: ${{ github.ref_name }}
 
   npm-publish:
-    # Manual-only until NPM_TOKEN is configured for continuonai/rcan-ts.
+    # OIDC Trusted Publishing — requires a trusted publisher registered on npmjs.com
+    # for the rcan-ts package (org RobotRegistryFoundation, repo rcan-ts, workflow publish.yml).
     # Trigger via Actions → Release → Run workflow → publish_npm=true.
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.publish_npm == 'true'
     needs: build-and-test
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # OIDC: npm Trusted Publishing (no NPM_TOKEN needed)
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22            # npm OIDC requires Node >= 22.14.0
           registry-url: https://registry.npmjs.org
           cache: npm
+      - name: Upgrade npm for trusted publishing
+        run: npm install -g npm@latest   # OIDC requires npm CLI >= 11.5.1
       - run: npm ci
       - run: npm run build
-      - name: Publish to npm
+      - name: Publish to npm (OIDC — provenance is automatic)
         run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   backfill-emit:
     name: Emit signed version-tuple envelope (backfill)
@@ -136,7 +140,7 @@ jobs:
               --generate-notes
           fi
 
-      - uses: continuonai/rcan-spec/.github/actions/emit-version-tuple@v3.2.3
+      - uses: RobotRegistryFoundation/rcan-spec/.github/actions/emit-version-tuple@v3.2.3
         with:
           project: rcan-ts
           ran: ${{ secrets.RCAN_TS_RELEASE_RAN }}
