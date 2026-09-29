@@ -330,3 +330,27 @@ export { makeRegistryRegister } from './message.js';
 export { canonicalJson } from "./encoding.js";
 export { signBody, verifyBody } from "./hybrid.js";
 export type { SignBodyOptions } from "./hybrid.js";
+
+// ── Appendix C: Physical Assurance Profile (informative) ─────────────────────
+// Verifies evidence, not robots. Hashing functions are async (Web Crypto).
+export {
+  ASSURANCE_LEVELS,
+  GENESIS_PREV,
+  envelopeHash,
+  recordHash,
+  appendRecord,
+  verifyChain,
+  auditAuthority,
+  replayAgainstEnvelope,
+} from "./assurance.js";
+export type {
+  AssuranceLevel,
+  AssuranceFinding,
+  Envelope,
+  EnvelopePoint,
+  EnvelopePolygon,
+  EnvelopeProximityRule,
+  GateDecision,
+  GateDecisionValue,
+  ReplayEnvelope,
+} from "./assurance.js";
