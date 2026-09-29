@@ -148,6 +148,43 @@ const node = await client.discover("RRN-BD-000000000001");
 console.log(node.operator);  // "Boston Dynamics, Inc."
 ```
 
+## Physical assurance (RCAN Appendix C, informative)
+
+Appendix C (Physical Assurance Profile) is informative. Nothing in it is required
+for RCAN conformance, and nothing in this SDK calls these helpers for you.
+
+rcan-ts ships the `Envelope` and `GateDecision` types (matching the
+`envelope.json` and `gate-decision.json` schemas) and a port of the rcan-spec
+reference verifier for `gate_decision` evidence chains:
+
+```typescript
+import { verifyChain, auditAuthority, replayAgainstEnvelope } from "rcan-ts";
+import type { Envelope, GateDecision } from "rcan-ts";
+
+const findings = [
+  ...(await verifyChain(chain, anchoredHead)),       // hash links, seq, per-record hash
+  ...auditAuthority(chain, envelope),                // executed gated commands carry authority
+  ...(await replayAgainstEnvelope(chain, envelope)), // applied commands inside the envelope
+];
+// UNCHECKED_FIELDS lists fields the replay does not judge; it is not a pass.
+```
+
+Functions that hash (`envelopeHash`, `recordHash`, `appendRecord`, `verifyChain`,
+`replayAgainstEnvelope`) are async because they use Web Crypto, which works the
+same in Node 18+ and browsers. `auditAuthority` is synchronous.
+
+What these helpers do and do not tell you:
+
+- They verify evidence, not robots. A passing chain says nothing about whether the
+  machine behaved as logged.
+- Without an anchored head (`expectedHead`), removing records from the end of a
+  chain is not detectable.
+- Assurance levels A1 to A3 are independent of the RCAN protocol conformance
+  levels L1 to L4. An L3 robot can be A1.
+- An envelope's `level` is self-declared by the integrator unless third-party
+  evidence accompanies it.
+- Conformance is not certification.
+
 ## Spec Compliance
 
 Implements [the RCAN protocol](https://rcan.dev/compatibility) — 405 tests, 0 skipped. See the [live compatibility matrix](https://rcan.dev/compatibility) for the pinned version this SDK targets.
