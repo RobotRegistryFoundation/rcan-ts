@@ -1,3 +1,41 @@
+## [3.5.0] - 2026-09-29
+
+### Added
+
+- **Appendix C, Physical Assurance Profile (informative)**: new
+  `src/assurance.ts`, exported from the package root.
+  - Types: `Envelope` (rcan-spec `schemas/envelope.json` v0.1),
+    `GateDecision` (`schemas/gate-decision.json` v0.1), `GateDecisionValue`
+    (`"allow" | "clamp" | "reject" | "stop"`), `AssuranceLevel`,
+    `AssuranceFinding`, `ReplayEnvelope`.
+  - Constants: `ASSURANCE_LEVELS` (`A1`, `A2`, `A3`), `GENESIS_PREV`.
+  - Functions: `envelopeHash`, `recordHash`, `appendRecord`,
+    `verifyChain(chain, expectedHead?)`, `auditAuthority`,
+    `replayAgainstEnvelope`. Port of the rcan-spec reference verifier
+    (`scripts/assurance/evidence-chain.ts`, rcan-spec#221, not yet merged)
+    with the same semantics and finding codes.
+- `envelopeHash`, `recordHash`, `appendRecord`, `verifyChain` and
+  `replayAgainstEnvelope` are **async** (they hash with Web Crypto, one code
+  path for Node 18+ and browsers). `auditAuthority` is synchronous.
+- Reuses the existing `canonicalJson` from `encoding.ts`; no new dependency.
+
+### Tests
+
+- `tests/assurance.test.ts` (50 tests). `recordHash` of every record in the
+  rcan-spec fixture chain equals the stored `hash`, and `envelopeHash` of the
+  rover envelope equals the hash every record carries: cross-implementation
+  parity with the rcan-spec reference verifier. Fixtures copied under
+  `tests/fixtures/assurance/` with their origin noted.
+
+### Notes
+
+- Informative and optional. These helpers verify evidence, not robots; a
+  passing chain says nothing about whether the machine behaved as logged.
+  A1 to A3 are independent of RCAN L1 to L4. Conformance is not
+  certification.
+- Spec version unchanged (`SPEC_VERSION` stays "3.2"). SDK 3.4.2 to 3.5.0.
+- Wire format unchanged. No existing export changed.
+
 ## [3.4.2] — 2026-04-28
 
 ### Added

@@ -1,6 +1,6 @@
 {
   "name": "rcan-ts",
-  "version": "3.4.2",
+  "version": "3.5.0",
   "description": "Official TypeScript SDK for the RCAN v3.2 robot communication protocol",
   "main": "dist/index.cjs",
   "module": "dist/index.mjs",
