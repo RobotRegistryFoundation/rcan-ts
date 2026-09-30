@@ -2,6 +2,8 @@
 
 ### Added
 
+- `MessageType.AUTHORIZE = 45`. Spec §16.4 requires an AUTHORIZE message but the canonical table never numbered it; 45 is the next free value (RobotRegistryFoundation/rcan-spec#221). Additive: no existing value changes.
+
 - **Appendix C, Physical Assurance Profile (informative)**: new
   `src/assurance.ts`, exported from the package root.
   - Types: `Envelope` (rcan-spec `schemas/envelope.json` v0.1),

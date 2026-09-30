@@ -98,6 +98,8 @@ export enum MessageType {
   FIRMWARE_ATTESTATION       = 43,
   /** robot → RRF: publish updated CycloneDX SBOM */
   SBOM_UPDATE                = 44,
+  /** HiTL: approve or deny a PENDING_AUTH (spec §16.4; numbered in v3.3) */
+  AUTHORIZE                  = 45,
   // FEDERATION_SYNC, ALERT, AUDIT aliases removed in v2.1
 }
 
