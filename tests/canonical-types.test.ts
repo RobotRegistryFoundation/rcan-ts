@@ -54,6 +54,8 @@ const CANONICAL_TABLE: Record<string, number> = {
   AUTHORITY_RESPONSE:         42,
   FIRMWARE_ATTESTATION:       43,
   SBOM_UPDATE:                44,
+  // HiTL authorization — v3.3 (45)
+  AUTHORIZE:                  45,
 };
 
 describe("v2.1 Canonical MessageType Table", () => {
@@ -66,7 +68,7 @@ describe("v2.1 Canonical MessageType Table", () => {
     }
   );
 
-  test("should have all 44 canonical types", () => {
+  test("should have all 45 canonical types", () => {
     for (const name of Object.keys(CANONICAL_TABLE)) {
       expect(MessageType).toHaveProperty(name);
     }
