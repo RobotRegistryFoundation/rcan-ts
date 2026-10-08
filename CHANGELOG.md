@@ -1,3 +1,24 @@
+## [Unreleased]
+
+### Fixed
+
+- `canonicalJson` wrote objects with integer-like member names in the wrong
+  order: it rebuilt an object from the sorted names, and JavaScript lists
+  names like `"9"` and `"10"` first, in numeric order. `{"b":0,"10":1,"9":2}`
+  now comes out as `{"10":1,"9":2,"b":0}`, as in rcan-spec, the reference
+  verifier and rcan-py. Hashes and signatures over objects with such names
+  change.
+
+### Changed
+
+- `canonicalJson` throws `RCANEncodingError` (new export, `code`
+  `"non_finite_number"` or `"invalid_string"`) for NaN, Infinity and strings
+  or names with an unpaired surrogate, where it used to write `null` or an
+  escape. RFC 8785 requires the error; proposed for the spec in
+  RobotRegistryFoundation/rcan-spec#223.
+- `tests/fixtures/canonical-json-v1.json` follows rcan-spec#224 (new vectors
+  and `error_cases`).
+
 ## [3.5.0] - 2026-09-29
 
 ### Added
