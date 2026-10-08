@@ -2,11 +2,10 @@
  * Tests for src/encoding.ts — canonical JSON serialization.
  *
  * CRITICAL: The fixture test pins rcan-ts's output bytes to rcan-spec's
- * canonical-json-v1.json fixture, which was generated from Python's
- * json.dumps(body, sort_keys=True, separators=(",",":"), ensure_ascii=False).
- * If this test fails, JSON.stringify(sortKeys(obj)) via TextEncoder is NOT
- * producing identical bytes to Python's serializer. Do NOT edit the
- * fixture to match — escalate.
+ * canonical-json-v1.json fixture (RFC 8785, spec/audit-bundle-v1.md). If
+ * this test fails,
+ * rcan-ts no longer produces the bytes the other implementations hash and
+ * sign. Do NOT edit the fixture to match — escalate.
  */
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -43,6 +42,24 @@ describe("canonicalJson — fixture parity (rcan-spec)", () => {
       expect(ok).toBe(true);
     });
   }
+});
+
+describe("canonicalJson — RFC 8785 details", () => {
+  const text = (v: Record<string, unknown>) => new TextDecoder().decode(canonicalJson(v));
+
+  test("integer-like names sort as strings, not first in numeric order", () => {
+    expect(text({ b: 0, "10": 1, "9": 2, "": 3 })).toBe('{"":3,"10":1,"9":2,"b":0}');
+    expect(text({ z: { "2": "b", "10": "a" } })).toBe('{"z":{"10":"a","2":"b"}}');
+  });
+
+  test("names sort by UTF-16 code units", () => {
+    expect(text({ "": 1, "😀": 2 })).toBe('{"😀":2,"":1}');
+  });
+
+  test("members with no JSON form are left out, as JSON.stringify does", () => {
+    expect(text({ a: undefined, b: 1, c: () => 1 })).toBe('{"b":1}');
+    expect(text({ a: [undefined, 1] })).toBe('{"a":[null,1]}');
+  });
 });
 
 describe("canonicalJson — unit", () => {

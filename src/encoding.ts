@@ -1,33 +1,54 @@
 /**
  * rcan.encoding — Canonical JSON serialization for RCAN wire formats.
  *
- * Matches Python's
- *   json.dumps(body, sort_keys=True, separators=(",",":"), ensure_ascii=False).encode("utf-8")
- *
- * Invariants (pinned by rcan-spec/fixtures/canonical-json-v1.json):
- *   - Keys sorted lexicographically at every nesting level
+ * RFC 8785 (JSON Canonicalization Scheme), as rcan-spec
+ * spec/audit-bundle-v1.md states it, pinned by
+ * rcan-spec/fixtures/canonical-json-v1.json:
+ *   - Members sorted by name at every nesting level, comparing names as UTF-16
+ *     code units; names that look like numbers are compared as strings
  *   - No whitespace
+ *   - Numbers written as ECMAScript's Number::toString writes them (so
+ *     whole-number floats have no trailing .0, and -0 is 0)
  *   - Non-ASCII Unicode emitted as raw UTF-8 (NOT \uXXXX escapes)
- *   - Integers emit without trailing .0
  *   - Empty object = {}, empty array = []
  *   - No trailing newline
  *
- * V8's JSON.stringify with no spacer produces no whitespace and emits
- * non-ASCII as raw UTF-8 (via the surrounding TextEncoder). Sorting is
- * the only thing JSON.stringify does not do by default, so we recurse
- * first via sortKeys().
+ * The output is written member by member. Building a sorted object and passing
+ * it to JSON.stringify does not work: JavaScript objects list integer-like
+ * names ("9", "10") first, in numeric order, whatever order they were added
+ * in. JSON.stringify is still used for each number and string, because it
+ * writes them exactly as RFC 8785 requires.
  */
 
-function sortKeys(v: unknown): unknown {
-  if (Array.isArray(v)) return v.map(sortKeys);
-  if (v && typeof v === "object") {
-    const out: Record<string, unknown> = {};
-    for (const k of Object.keys(v as Record<string, unknown>).sort()) {
-      out[k] = sortKeys((v as Record<string, unknown>)[k]);
+function write(v: unknown): string | undefined {
+  if (v === null) return "null";
+  switch (typeof v) {
+    case "boolean":
+      return v ? "true" : "false";
+    case "number":
+    case "string":
+      return JSON.stringify(v);
+    case "object": {
+      if (Array.isArray(v)) {
+        // As JSON.stringify does, an element with no JSON form is written null.
+        return `[${v.map((x) => write(x) ?? "null").join(",")}]`;
+      }
+      const obj = v as Record<string, unknown>;
+      const members: string[] = [];
+      // Array.prototype.sort compares strings by UTF-16 code units.
+      for (const k of Object.keys(obj).sort()) {
+        const value = write(obj[k]);
+        // As JSON.stringify does, a member with no JSON form (undefined, a
+        // function) is left out.
+        if (value !== undefined) members.push(`${JSON.stringify(k)}:${value}`);
+      }
+      return `{${members.join(",")}}`;
     }
-    return out;
+    case "bigint":
+      throw new TypeError("canonicalJson: a BigInt has no JSON form");
+    default:
+      return undefined; // undefined, function, symbol
   }
-  return v;
 }
 
 /**
@@ -35,5 +56,5 @@ function sortKeys(v: unknown): unknown {
  * Deterministic: equivalent inputs yield identical bytes.
  */
 export function canonicalJson(obj: Record<string, unknown>): Uint8Array {
-  return new TextEncoder().encode(JSON.stringify(sortKeys(obj)));
+  return new TextEncoder().encode(write(obj) ?? "null");
 }
