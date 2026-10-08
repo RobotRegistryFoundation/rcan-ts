@@ -2,8 +2,8 @@
  * Tests for src/encoding.ts — canonical JSON serialization.
  *
  * CRITICAL: The fixture test pins rcan-ts's output bytes to rcan-spec's
- * canonical-json-v1.json fixture (RFC 8785, spec/audit-bundle-v1.md). If
- * this test fails,
+ * canonical-json-v1.json fixture (RFC 8785, spec/audit-bundle-v1.md). Its
+ * `cases` give exact bytes; its `error_cases` must throw. If this test fails,
  * rcan-ts no longer produces the bytes the other implementations hash and
  * sign. Do NOT edit the fixture to match — escalate.
  */
@@ -11,6 +11,7 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { canonicalJson } from "../src/encoding.js";
+import { RCANEncodingError } from "../src/errors.js";
 
 // ESM-compatible __dirname
 const _filename = fileURLToPath(import.meta.url);
@@ -44,6 +45,21 @@ describe("canonicalJson — fixture parity (rcan-spec)", () => {
   }
 });
 
+describe("canonicalJson — fixture error cases (rcan-spec)", () => {
+  for (const c of fixture.error_cases) {
+    test(`case ${c.name} throws ${c.expected_error}`, () => {
+      let error: unknown;
+      try {
+        canonicalJson(JSON.parse(c.input_json));
+      } catch (e) {
+        error = e;
+      }
+      expect(error).toBeInstanceOf(RCANEncodingError);
+      expect((error as RCANEncodingError).code).toBe(c.expected_error);
+    });
+  }
+});
+
 describe("canonicalJson — RFC 8785 details", () => {
   const text = (v: Record<string, unknown>) => new TextDecoder().decode(canonicalJson(v));
 
@@ -54,6 +70,13 @@ describe("canonicalJson — RFC 8785 details", () => {
 
   test("names sort by UTF-16 code units", () => {
     expect(text({ "": 1, "😀": 2 })).toBe('{"😀":2,"":1}');
+  });
+
+  test("NaN, Infinity and unpaired surrogates throw instead of writing null or an escape", () => {
+    expect(() => canonicalJson({ x: NaN })).toThrow(RCANEncodingError);
+    expect(() => canonicalJson({ x: [Infinity] })).toThrow(RCANEncodingError);
+    expect(() => canonicalJson({ x: "\ud800" })).toThrow(RCANEncodingError);
+    expect(() => canonicalJson({ "\udc00": 1 })).toThrow(RCANEncodingError);
   });
 
   test("members with no JSON form are left out, as JSON.stringify does", () => {

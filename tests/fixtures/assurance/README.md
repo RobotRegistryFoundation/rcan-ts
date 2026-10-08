@@ -15,9 +15,10 @@ reference verifier. `tests/assurance.test.ts` recomputes them with rcan-ts, so
 these files are the cross-implementation parity check. Do not edit them to make
 a test pass; re-copy from rcan-spec if the spec changes.
 
-Canonical JSON parity uses the existing `tests/fixtures/canonical-json-v1.json`,
-which is byte-identical to rcan-spec's `fixtures/canonical-json-v1.json` on that
-branch.
+Canonical JSON parity uses `tests/fixtures/canonical-json-v1.json`, which is
+byte-identical to rcan-spec's `fixtures/canonical-json-v1.json` on branch
+`canonical-json-rfc8785` (RobotRegistryFoundation/rcan-spec#224, which adds the
+RFC 8785 vectors and `error_cases`).
 
 These fixtures are illustrative. They describe no real robot, and the envelope
 signature is a placeholder.

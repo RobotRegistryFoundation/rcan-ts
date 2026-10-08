@@ -57,6 +57,7 @@ export {
   RCANReplayAttackError,
   RCANDelegationChainError,
   RCANConfigAuthorizationError,
+  RCANEncodingError,
 } from "./errors.js";
 
 export { RegistryClient } from "./registry.js";
