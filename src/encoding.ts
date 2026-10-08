@@ -55,8 +55,9 @@ function write(v: unknown): string | undefined {
       return writeString(v);
     case "object": {
       if (Array.isArray(v)) {
-        // As JSON.stringify does, an element with no JSON form is written null.
-        return `[${v.map((x) => write(x) ?? "null").join(",")}]`;
+        // As JSON.stringify does, an element with no JSON form, or a hole in a
+        // sparse array, is written null. (Array.from visits holes; map skips them.)
+        return `[${Array.from(v, (x) => write(x) ?? "null").join(",")}]`;
       }
       const obj = v as Record<string, unknown>;
       const members: string[] = [];

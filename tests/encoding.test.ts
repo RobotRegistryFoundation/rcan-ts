@@ -82,6 +82,8 @@ describe("canonicalJson — RFC 8785 details", () => {
   test("members with no JSON form are left out, as JSON.stringify does", () => {
     expect(text({ a: undefined, b: 1, c: () => 1 })).toBe('{"b":1}');
     expect(text({ a: [undefined, 1] })).toBe('{"a":[null,1]}');
+    // eslint-disable-next-line no-sparse-arrays
+    expect(text({ a: new Array(2), b: [1, , 3] })).toBe('{"a":[null,null],"b":[1,null,3]}');
   });
 });
 
