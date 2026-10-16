@@ -25,7 +25,10 @@
     "protocol",
     "ai-safety",
     "embodied-ai",
-    "typescript"
+    "typescript",
+    "robot-safety",
+    "physical-assurance",
+    "bounded-embodiment"
   ],
   "author": "Craig Merry <cmmerry@ucdavis.edu>",
   "license": "MIT",
@@ -84,6 +87,9 @@
     "LICENSE"
   ],
   "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
   "publishConfig": {
     "access": "public"
   },
