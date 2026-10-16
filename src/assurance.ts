@@ -17,8 +17,13 @@
  *
  * Informative and optional. These helpers verify evidence, not robots: a
  * passing chain says nothing about whether the machine behaved as logged.
- * Assurance levels A1-A3 are independent of the RCAN protocol conformance
- * levels L1-L4. Conformance is not certification.
+ * Assurance levels BE-1 to BE-3 (named A1-A3 before rcan-spec #226) are
+ * independent of the RCAN protocol conformance levels L1-L4. Conformance is
+ * not certification.
+ *
+ * RCAN is one open implementation of the Bounded Embodiment property. The
+ * property and its vendor-neutral method do not depend on RCAN:
+ * https://github.com/RobotRegistryFoundation/bounded-embodiment
  *
  * Hashing uses Web Crypto (SubtleCrypto), which is async, so every function
  * that hashes returns a Promise. This keeps one code path for Node 18+ and
@@ -29,9 +34,26 @@ import { canonicalJson } from "./encoding.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-/** Physical assurance levels: A1 Declared, A2 Enforced, A3 Assured. */
+/**
+ * Physical assurance levels as schemas/envelope.json names them since
+ * rcan-spec #226: BE-1 Declared, BE-2 Enforced, BE-3 Assured.
+ */
+export const BE_LEVELS = ["BE-1", "BE-2", "BE-3"] as const;
+
+/**
+ * The earlier names of the same levels (A1 Declared, A2 Enforced, A3 Assured).
+ * Kept unchanged for compatibility; the current schema accepts only BE_LEVELS
+ * in envelope.level.
+ */
 export const ASSURANCE_LEVELS = ["A1", "A2", "A3"] as const;
-export type AssuranceLevel = (typeof ASSURANCE_LEVELS)[number];
+export type AssuranceLevel = (typeof BE_LEVELS)[number] | (typeof ASSURANCE_LEVELS)[number];
+
+/** gate_decision.stop_kind values (Appendix C.1.3). Only with decision stop. */
+export const STOP_KINDS = ["protective", "repeated", "emergency"] as const;
+export type StopKind = (typeof STOP_KINDS)[number];
+
+/** envelope.recovery.on_reject values (Appendix C.1.3). */
+export const ON_REJECT_BEHAVIOURS = ["hold", "slow_down"] as const;
 
 /** prev value of the first record in a chain: "sha256:" followed by 64 zeros. */
 export const GENESIS_PREV = "sha256:" + "0".repeat(64);
@@ -71,11 +93,37 @@ export interface Envelope {
   force?: { max_contact_force_n?: number; max_payload_kg?: number };
   proximity?: EnvelopeProximityRule[];
   sensing?: { max_state_age_ms?: number };
-  stop: { category: 0 | 1 | 2; max_time_ms: number; max_distance_m: number };
+  stop: {
+    category: 0 | 1 | 2;
+    max_time_ms: number;
+    max_distance_m: number;
+    /**
+     * Optional. The state the machine ends in after a stop, declared by the
+     * integrator, because stopped is not always safe (Appendix C.1.3). Free
+     * text in v0.1, e.g. stop_in_place, hold, set_down,
+     * controlled_crouch_then_power_off.
+     */
+    safe_state?: string;
+  };
+  /** Optional. What happens after the gate says no (Appendix C.1.3). */
+  recovery?: EnvelopeRecovery;
   heartbeat: { model_timeout_ms: number; gate_timeout_ms: number; on_loss: "stop" };
   authority?: { required_for?: string[]; resolver?: "external" | "local" };
   /** `<alg>:<value>` over the canonical JSON of the envelope without this member. */
   signature?: string;
+}
+
+/** envelope.recovery (Appendix C.1.3). */
+export interface EnvelopeRecovery {
+  on_reject?: (typeof ON_REJECT_BEHAVIOURS)[number];
+  /** At least one of escalate_after_count and escalate_after_s. */
+  repeated_stops?: {
+    escalate_after_count?: number;
+    count_window_s?: number;
+    escalate_after_s?: number;
+  };
+  /** Only "manual": reset is done by a person and never restarts motion by itself. */
+  estop_reset?: "manual";
 }
 
 /** One gate_decision evidence record (rcan-spec schemas/gate-decision.json, v0.1). */
@@ -91,6 +139,10 @@ export interface GateDecision {
   applied: Record<string, unknown> | null;
   /** Required for clamp, reject and stop. */
   reason?: string;
+  /** Optional, only with decision stop (Appendix C.1.3). Covered by hash. */
+  stop_kind?: StopKind;
+  /** Optional, not with allow: the reason went back to the proposing model to re-plan. */
+  reason_returned?: boolean;
   envelope: string;
   state_digest: string;
   prev: string;
@@ -296,6 +348,113 @@ export async function replayAgainstEnvelope(
   }
   for (const k of unchecked) {
     findings.push({ seq: null, code: "UNCHECKED_FIELDS", detail: `applied.${k} is not judged by this reference replay` });
+  }
+  return findings;
+}
+
+// ── Recovery fields (Appendix C.1.3) ─────────────────────────────────────────
+//
+// The conditional rules schemas/envelope.json and gate-decision.json place on
+// the optional recovery fields added in rcan-spec #232. Not a full schema
+// validation: only those fields are checked. Synchronous (no hashing).
+
+const RECOVERY_KEYS = new Set(["on_reject", "repeated_stops", "estop_reset"]);
+const REPEATED_STOPS_KEYS = new Set(["escalate_after_count", "count_window_s", "escalate_after_s"]);
+
+const isObj = (x: unknown): x is Record<string, unknown> =>
+  typeof x === "object" && x !== null && !Array.isArray(x);
+const has = (o: object, k: string) => Object.prototype.hasOwnProperty.call(o, k);
+
+/**
+ * Check stop.safe_state and recovery against schemas/envelope.json. Both are
+ * optional; an envelope without them returns no findings. Codes:
+ * BAD_SAFE_STATE, BAD_RECOVERY, BAD_ON_REJECT, BAD_REPEATED_STOPS,
+ * ESTOP_RESET_NOT_MANUAL. All findings have seq null.
+ */
+export function checkEnvelopeRecovery(envelope: object): AssuranceFinding[] {
+  const findings: AssuranceFinding[] = [];
+  const bad = (code: string, detail: string) => findings.push({ seq: null, code, detail });
+  const env = envelope as Record<string, unknown>;
+
+  const stop = env.stop;
+  if (isObj(stop) && has(stop, "safe_state")) {
+    const ss = stop.safe_state;
+    if (!(typeof ss === "string" && ss.length >= 1)) bad("BAD_SAFE_STATE", "stop.safe_state must be a non-empty string");
+  }
+
+  if (!has(env, "recovery")) return findings;
+  const rec = env.recovery;
+  if (!isObj(rec)) {
+    bad("BAD_RECOVERY", "recovery must be an object");
+    return findings;
+  }
+  for (const k of Object.keys(rec).filter((k) => !RECOVERY_KEYS.has(k)).sort()) {
+    bad("BAD_RECOVERY", `recovery.${k} is not a recovery member`);
+  }
+  if (has(rec, "on_reject") && !(ON_REJECT_BEHAVIOURS as readonly unknown[]).includes(rec.on_reject)) {
+    bad("BAD_ON_REJECT", "recovery.on_reject must be hold or slow_down");
+  }
+  if (has(rec, "estop_reset") && rec.estop_reset !== "manual") {
+    bad("ESTOP_RESET_NOT_MANUAL", "recovery.estop_reset must be manual: reset alone never restarts motion");
+  }
+  if (has(rec, "repeated_stops")) {
+    const rs = rec.repeated_stops;
+    if (!isObj(rs)) {
+      bad("BAD_REPEATED_STOPS", "recovery.repeated_stops must be an object");
+      return findings;
+    }
+    for (const k of Object.keys(rs).filter((k) => !REPEATED_STOPS_KEYS.has(k)).sort()) {
+      bad("BAD_REPEATED_STOPS", `recovery.repeated_stops.${k} is not a member`);
+    }
+    if (!has(rs, "escalate_after_count") && !has(rs, "escalate_after_s")) {
+      bad("BAD_REPEATED_STOPS", "recovery.repeated_stops needs escalate_after_count, escalate_after_s or both");
+    }
+    if (has(rs, "escalate_after_count")) {
+      const n = rs.escalate_after_count;
+      if (!(typeof n === "number" && Number.isInteger(n) && n >= 1)) {
+        bad("BAD_REPEATED_STOPS", "recovery.repeated_stops.escalate_after_count must be an integer >= 1");
+      }
+    }
+    for (const k of ["count_window_s", "escalate_after_s"]) {
+      if (has(rs, k)) {
+        const v = rs[k];
+        if (!(typeof v === "number" && Number.isFinite(v) && v > 0)) {
+          bad("BAD_REPEATED_STOPS", `recovery.repeated_stops.${k} must be a number > 0`);
+        }
+      }
+    }
+  }
+  return findings;
+}
+
+/**
+ * Check stop_kind and reason_returned against schemas/gate-decision.json:
+ * stop_kind is one of STOP_KINDS and appears only with decision stop;
+ * reason_returned is a boolean and never appears with allow. Codes:
+ * BAD_STOP_KIND, STOP_KIND_WITHOUT_STOP, BAD_REASON_RETURNED,
+ * REASON_RETURNED_WITH_ALLOW.
+ */
+export function checkStopFields(chain: readonly object[]): AssuranceFinding[] {
+  const findings: AssuranceFinding[] = [];
+  for (const r of chain) {
+    if (!isObj(r)) continue;
+    const seq = typeof r.seq === "number" ? r.seq : null;
+    if (has(r, "stop_kind")) {
+      if (!(STOP_KINDS as readonly unknown[]).includes(r.stop_kind)) {
+        findings.push({ seq, code: "BAD_STOP_KIND", detail: "stop_kind must be protective, repeated or emergency" });
+      }
+      if (r.decision !== "stop") {
+        findings.push({ seq, code: "STOP_KIND_WITHOUT_STOP", detail: "stop_kind is only valid with decision stop" });
+      }
+    }
+    if (has(r, "reason_returned")) {
+      if (typeof r.reason_returned !== "boolean") {
+        findings.push({ seq, code: "BAD_REASON_RETURNED", detail: "reason_returned must be a boolean" });
+      }
+      if (r.decision === "allow") {
+        findings.push({ seq, code: "REASON_RETURNED_WITH_ALLOW", detail: "reason_returned is not valid with decision allow" });
+      }
+    }
   }
   return findings;
 }

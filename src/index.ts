@@ -335,6 +335,11 @@ export type { SignBodyOptions } from "./hybrid.js";
 // Verifies evidence, not robots. Hashing functions are async (Web Crypto).
 export {
   ASSURANCE_LEVELS,
+  BE_LEVELS,
+  STOP_KINDS,
+  ON_REJECT_BEHAVIOURS,
+  checkEnvelopeRecovery,
+  checkStopFields,
   GENESIS_PREV,
   envelopeHash,
   recordHash,
@@ -350,7 +355,9 @@ export type {
   EnvelopePoint,
   EnvelopePolygon,
   EnvelopeProximityRule,
+  EnvelopeRecovery,
   GateDecision,
   GateDecisionValue,
   ReplayEnvelope,
+  StopKind,
 } from "./assurance.js";
