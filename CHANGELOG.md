@@ -1,3 +1,28 @@
+## [3.6.0] - 2026-10-16
+
+3.5.0 was tagged but never published to npm; its changes ship in this release.
+
+### Added
+
+- Appendix C recovery fields from rcan-spec#232 (C.1.3): `Envelope.stop.safe_state`,
+  `Envelope.recovery` (`on_reject`, `repeated_stops`, `estop_reset`),
+  `GateDecision.stop_kind` and `GateDecision.reason_returned`, with
+  `checkEnvelopeRecovery` and `checkStopFields` for the schema's conditional rules.
+  Not a full schema validation.
+- `BE_LEVELS` (`BE-1`, `BE-2`, `BE-3`), the level names schemas/envelope.json has
+  used since rcan-spec#226. `AssuranceLevel` accepts both; `ASSURANCE_LEVELS` keeps
+  its A1-A3 value.
+- `STOP_KINDS`, `ON_REJECT_BEHAVIOURS`, `EnvelopeRecovery`, `StopKind`.
+- `engines.node >= 18` in package.json.
+- A `LICENSE` file (MIT, as package.json already declared).
+
+### Changed
+
+- Assurance test fixtures re-copied from rcan-spec master.
+- README examples rewritten against the current API; the registry-resolution example
+  uses a registered RRN. rcan.dev's root node now publishes its key, so `resolve()`
+  and `discover()` work against it.
+
 ## [3.5.0] - 2026-09-29
 
 ### Added
