@@ -137,12 +137,12 @@ import { NodeClient } from "rcan-ts";
 const client = new NodeClient();
 
 // Discover which node is authoritative for an RRN
-const node = await client.discover("RRN-000000000001");
+const node = await client.discover("RRN-000000000003");
 console.log(node.operator); // "Robot Registry Foundation"
 
 // Resolve an RRN across the federation
-const result = await client.resolve("RRN-000000000001");
-console.log(result.record.name, result.record.verification_tier);
+const result = await client.resolve("RRN-000000000003");
+console.log(result.record.manufacturer, result.record.model, result.record.verification_tier);
 ```
 
 When the root does not answer for an RRN directly, `resolve()` and `discover()`
