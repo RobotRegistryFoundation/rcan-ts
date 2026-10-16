@@ -145,10 +145,14 @@ const result = await client.resolve("RRN-000000000001");
 console.log(result.record.name, result.record.verification_tier);
 ```
 
-`resolve()` checks the authoritative node's published public key before it
-trusts a record. A node that publishes no key fails with
-`RCANNodeTrustError("missing_pubkey")`; the root node's manifest is at
-[rcan.dev/.well-known/rcan-node.json](https://rcan.dev/.well-known/rcan-node.json).
+When the root does not answer for an RRN directly, `resolve()` and `discover()`
+fetch the authoritative node's manifest and check that it publishes an
+`ed25519:` public key. A node that publishes no key fails with
+`RCANNodeTrustError("missing_pubkey")`. The rcan.dev root node publishes its key
+in [rcan.dev/.well-known/rcan-node.json](https://rcan.dev/.well-known/rcan-node.json)
+(`public_key`, `ed25519_public_key`, self-signed under kid
+`ed25519-d626701596f726df`), so discovery against the root succeeds. The check is
+a format check: rcan-ts does not verify the manifest signature.
 
 ## Physical assurance (RCAN Appendix C, informative)
 
