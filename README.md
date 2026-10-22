@@ -2,6 +2,8 @@
 
 **TypeScript SDK for the [RCAN protocol](https://rcan.dev/spec/).** Build robots that communicate securely, audit every action, and enforce safety gates — in Node.js or the browser. Pinned protocol version: see the [live compatibility matrix](https://rcan.dev/compatibility).
 
+Spec: [rcan.dev](https://rcan.dev) · Docs: [docs.rcan.dev](https://docs.rcan.dev) · Package: [npm `rcan-ts`](https://www.npmjs.com/package/rcan-ts)
+
 [![npm version](https://img.shields.io/npm/v/rcan-ts.svg)](https://www.npmjs.com/package/rcan-ts)
 [![RCAN Spec](https://img.shields.io/badge/RCAN-live%20matrix-blue)](https://rcan.dev/compatibility)
 [![CI](https://github.com/RobotRegistryFoundation/rcan-ts/actions/workflows/ci.yml/badge.svg)](https://github.com/RobotRegistryFoundation/rcan-ts/actions)
@@ -43,9 +45,7 @@ Node 18+ required (uses Web Crypto API for `transport.encodeMinimal`).
 ## Quick Start
 
 ```typescript
-import { RobotURI, RCANMessage, ConfidenceGate } from "rcan-ts";
-import { ReplayCache } from "rcan-ts";
-import { AuditChain } from "rcan-ts";
+import { RobotURI, RCANMessage, ConfidenceGate, ReplayCache, AuditChain } from "rcan-ts";
 
 // 1. Address a robot
 const uri = RobotURI.build({
@@ -54,40 +54,35 @@ const uri = RobotURI.build({
   version: "v2",
   deviceId: "unit-001",
 });
-// rcan://registry.rcan.dev/acme/arm/v2/unit-001
+console.log(uri.toString()); // rcan://registry.rcan.dev/acme/arm/v2/unit-001
 
-// 2. Gate on AI confidence before acting
+// 2. Gate on model confidence before acting
 const gate = new ConfidenceGate(0.8);
 const confidence = 0.91;
+if (!gate.allows(confidence)) throw new Error("confidence below threshold");
 
-if (gate.allows(confidence)) {
-  const msg = new RCANMessage({
-    cmd: "move_forward",
-    target: uri,
-    params: { distance_m: 1.0 },
-    confidence,
-    modelIdentity: "gemini-2.5-flash",
-  });
+const msg = new RCANMessage({
+  cmd: "move_forward",
+  target: uri,
+  params: { distance_m: 1.0 },
+  confidence,
+});
 
-  // 3. Replay attack prevention
-  const cache = new ReplayCache({ windowSeconds: 300 });
-  if (cache.isReplay(msg.msgId)) throw new Error("Replay attack detected");
-  cache.record(msg.msgId);
+// 3. Replay prevention: reject a message id seen inside the window
+const cache = new ReplayCache(30);
+const msgId = crypto.randomUUID();
+console.log(cache.checkAndRecord(msgId, msg.timestamp).allowed); // true
+console.log(cache.checkAndRecord(msgId, msg.timestamp).allowed); // false: replay
 
-  // 4. ESTOP with QoS 2 (EXACTLY_ONCE) — never dropped
-  const estop = new RCANMessage({
-    cmd: "estop",
-    target: uri,
-    qos: 2, // QoSLevel.EXACTLY_ONCE
-  });
-}
+// 4. ESTOP with QoS 2 (EXACTLY_ONCE)
+const estop = new RCANMessage({ cmd: "estop", target: uri, qos: 2 });
 
-// 5. Tamper-evident audit chain
+// 5. HMAC-chained audit log
 const chain = new AuditChain("your-hmac-secret");
 chain.append({
   action: "move_forward",
   robotUri: uri.toString(),
-  confidence: 0.91,
+  confidence,
   safetyApproved: true,
 });
 const { valid, count } = chain.verifyAll();
@@ -97,7 +92,9 @@ console.log(`Chain valid: ${valid}, ${count} records`);
 const jsonl = chain.toJSONL();
 ```
 
-## What's in v0.6.0
+`RCANMessage` does not carry a message id in rcan-ts; pass the id your transport assigns to `checkAndRecord`.
+
+## Modules
 
 | Module | Description |
 |---|---|
@@ -123,11 +120,12 @@ const jsonl = chain.toJSONL();
 | `node` | `NodeClient` — resolve RRNs across federated registry nodes (§17) |
 | `validate` | L1/L2/L3 conformance validation for configs, messages, URIs |
 | `schema` | Canonical JSON schema validation against rcan.dev |
+| `assurance` | RCAN Appendix C evidence checks: gate-decision chains, envelopes, recovery fields (informative) |
 
 ## Protocol 66 Compliance
 
 - **ESTOP always delivered** — send with `qos: 2` (`EXACTLY_ONCE`); never blocked
-- **Local safety wins** — `OfflineMode` enforces limits without cloud connectivity
+- **Local safety wins** — `OfflineModeManager` enforces limits without cloud connectivity
 - **Confidence gates run locally** — `ConfidenceGate` makes no network calls
 - **Audit chain required** — `AuditChain.verifyAll()` before executing flagged commands
 
@@ -138,40 +136,63 @@ import { NodeClient } from "rcan-ts";
 
 const client = new NodeClient();
 
-// Resolve an RRN across the federation
-const result = await client.resolve("RRN-000000000001");
-console.log(result.record.name);         // "Bob"
-console.log(result.record.verification_tier); // "verified"
+// Discover which node is authoritative for an RRN
+const node = await client.discover("RRN-000000000003");
+console.log(node.operator); // "Robot Registry Foundation"
 
-// Discover which node is authoritative
-const node = await client.discover("RRN-BD-000000000001");
-console.log(node.operator);  // "Boston Dynamics, Inc."
+// Resolve an RRN across the federation
+const result = await client.resolve("RRN-000000000003");
+console.log(result.record.manufacturer, result.record.model, result.record.verification_tier);
 ```
+
+When the root does not answer for an RRN directly, `resolve()` and `discover()`
+fetch the authoritative node's manifest and check that it publishes an
+`ed25519:` public key. A node that publishes no key fails with
+`RCANNodeTrustError("missing_pubkey")`. The rcan.dev root node publishes its key
+in [rcan.dev/.well-known/rcan-node.json](https://rcan.dev/.well-known/rcan-node.json)
+(`public_key`, `ed25519_public_key`, self-signed under kid
+`ed25519-d626701596f726df`), so discovery against the root succeeds. The check is
+a format check: rcan-ts does not verify the manifest signature.
 
 ## Physical assurance (RCAN Appendix C, informative)
 
-Appendix C (Physical Assurance Profile) is informative. Nothing in it is required
-for RCAN conformance, and nothing in this SDK calls these helpers for you.
+[Appendix C](https://github.com/RobotRegistryFoundation/rcan-spec/blob/master/spec/appendix-c-physical-assurance.md)
+(Physical Assurance Profile) is informative. Nothing in it is required for RCAN
+conformance, and nothing in this SDK calls these helpers for you.
+
+RCAN is one open implementation of the Bounded Embodiment property; the
+property and its [vendor-neutral method](https://github.com/RobotRegistryFoundation/bounded-embodiment/blob/main/method/bounded-embodiment-method-v0.1.md)
+do not depend on RCAN.
 
 rcan-ts ships the `Envelope` and `GateDecision` types (matching the
 `envelope.json` and `gate-decision.json` schemas) and a port of the rcan-spec
 reference verifier for `gate_decision` evidence chains:
 
 ```typescript
-import { verifyChain, auditAuthority, replayAgainstEnvelope } from "rcan-ts";
+import {
+  verifyChain, auditAuthority, replayAgainstEnvelope,
+  checkEnvelopeRecovery, checkStopFields,
+} from "rcan-ts";
 import type { Envelope, GateDecision } from "rcan-ts";
+
+declare const chain: GateDecision[];   // e.g. JSON.parse of a gate_decision log
+declare const envelope: Envelope;      // the signed envelope in force
+declare const anchoredHead: string | undefined;
 
 const findings = [
   ...(await verifyChain(chain, anchoredHead)),       // hash links, seq, per-record hash
   ...auditAuthority(chain, envelope),                // executed gated commands carry authority
   ...(await replayAgainstEnvelope(chain, envelope)), // applied commands inside the envelope
+  ...checkEnvelopeRecovery(envelope),                // stop.safe_state, recovery.*
+  ...checkStopFields(chain),                         // stop_kind, reason_returned
 ];
 // UNCHECKED_FIELDS lists fields the replay does not judge; it is not a pass.
 ```
 
 Functions that hash (`envelopeHash`, `recordHash`, `appendRecord`, `verifyChain`,
 `replayAgainstEnvelope`) are async because they use Web Crypto, which works the
-same in Node 18+ and browsers. `auditAuthority` is synchronous.
+same in Node 18+ and browsers. `auditAuthority`, `checkEnvelopeRecovery` and
+`checkStopFields` are synchronous.
 
 What these helpers do and do not tell you:
 
@@ -179,30 +200,36 @@ What these helpers do and do not tell you:
   machine behaved as logged.
 - Without an anchored head (`expectedHead`), removing records from the end of a
   chain is not detectable.
-- Assurance levels A1 to A3 are independent of the RCAN protocol conformance
-  levels L1 to L4. An L3 robot can be A1.
+- `checkEnvelopeRecovery` and `checkStopFields` check only the optional
+  recovery fields from Appendix C.1.3 and their conditional rules: `stop_kind`
+  only with `stop`, `reason_returned` never with `allow`, `estop_reset` only `manual`. They are not a full JSON Schema
+  validation.
+- Assurance levels BE-1 to BE-3 (`BE_LEVELS`; named A1 to A3 before
+  rcan-spec #226, still exported as `ASSURANCE_LEVELS`) are independent of the
+  RCAN protocol conformance levels L1 to L4. An L3 robot can be BE-1.
 - An envelope's `level` is self-declared by the integrator unless third-party
   evidence accompanies it.
 - Conformance is not certification.
 
 ## Spec Compliance
 
-Implements [the RCAN protocol](https://rcan.dev/compatibility) — 405 tests, 0 skipped. See the [live compatibility matrix](https://rcan.dev/compatibility) for the pinned version this SDK targets.
+Implements [the RCAN protocol](https://rcan.dev/compatibility); run `npm test` for the current test count. See the [live compatibility matrix](https://rcan.dev/compatibility) for the pinned version this SDK targets.
 
 API surface is intentionally identical to rcan-py: `RobotURI`, `RCANMessage`, `ConfidenceGate`, `HiTLGate`, `AuditChain`, and `validateConfig` work the same way in both languages.
 
 ## Ecosystem
 
-| Package | Version | Purpose |
-|---|---|---|
-| [rcan-py](https://github.com/RobotRegistryFoundation/rcan-py) | v0.6.0 | Python SDK |
-| **rcan-ts** (this) | v0.6.0 | TypeScript SDK |
-| [rcan-spec](https://github.com/RobotRegistryFoundation/rcan-spec) | v1.6.0 | Protocol spec |
-| [ROBOT.md](https://robotmd.dev) | v0.1.0 | Single-file robot manifest |
-| [OpenCastor](https://github.com/craigm26/OpenCastor) | v2026.3.17.1 | Robot runtime (reference impl) |
-| [RRF](https://robotregistryfoundation.org) | v1.6.0 | Robot identity registry |
-| [Fleet UI](https://app.opencastor.com) | live | Web fleet dashboard |
-| [Docs](https://docs.opencastor.com) | live | Runtime reference, RCAN, API |
+| Package | Purpose |
+|---|---|
+| [rcan-py](https://github.com/RobotRegistryFoundation/rcan-py) | Python SDK, [PyPI `rcan`](https://pypi.org/project/rcan/) |
+| **rcan-ts** (this) | TypeScript SDK, [npm `rcan-ts`](https://www.npmjs.com/package/rcan-ts) |
+| [rcan-spec](https://github.com/RobotRegistryFoundation/rcan-spec) | Protocol spec, published at [rcan.dev](https://rcan.dev) |
+| [RCAN docs](https://docs.rcan.dev) | Guides and reference |
+| [ROBOT.md](https://robotmd.dev) | Single-file robot manifest |
+| [OpenCastor](https://github.com/craigm26/OpenCastor) | Robot runtime, one implementation of RCAN |
+| [RRF](https://robotregistryfoundation.org) | Robot identity registry |
+
+Current versions: see the [live compatibility matrix](https://rcan.dev/compatibility).
 
 ## Contributing
 

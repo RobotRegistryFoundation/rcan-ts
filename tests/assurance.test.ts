@@ -11,6 +11,10 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   ASSURANCE_LEVELS,
+  BE_LEVELS,
+  STOP_KINDS,
+  checkEnvelopeRecovery,
+  checkStopFields,
   GENESIS_PREV,
   appendRecord,
   auditAuthority,
@@ -48,7 +52,7 @@ describe("cross-implementation parity with the rcan-spec reference verifier", ()
 
   test("envelopeHash(rover envelope) equals the envelope hash stored in every record", async () => {
     const h = await envelopeHash(ENVELOPE);
-    expect(h).toBe("sha256:ef796735bbfa6b725807fe56199b4ed06d90fe16448c06e0777e599362f36731");
+    expect(h).toBe("sha256:b36eaa8823b50ff231532b23444514e03fb9594b6bb3c8a0f9efea1bfd7ddb5e");
     for (const r of CHAIN) expect(r.envelope).toBe(h);
   });
 
@@ -66,12 +70,16 @@ describe("types and constants", () => {
   test("ASSURANCE_LEVELS is A1..A3 and contains no protocol L-level", () => {
     expect([...ASSURANCE_LEVELS]).toEqual(["A1", "A2", "A3"]);
   });
+  test("BE_LEVELS is BE-1..BE-3 and STOP_KINDS matches the schema", () => {
+    expect([...BE_LEVELS]).toEqual(["BE-1", "BE-2", "BE-3"]);
+    expect([...STOP_KINDS]).toEqual(["protective", "repeated", "emergency"]);
+  });
   test("GENESIS_PREV is sha256: plus 64 zeros", () => {
     expect(GENESIS_PREV).toBe("sha256:" + "0".repeat(64));
   });
   test("both envelope fixtures fit the Envelope type", () => {
-    expect(ENVELOPE.level).toBe("A2");
-    expect(ARM.level).toBe("A1");
+    expect(ENVELOPE.level).toBe("BE-2");
+    expect(ARM.level).toBe("BE-1");
   });
 });
 
@@ -231,5 +239,103 @@ describe("replay against the envelope", () => {
     expect(unchecked).toEqual([
       { seq: null, code: "UNCHECKED_FIELDS", detail: "applied.joint_torque_nm is not judged by this reference replay" },
     ]);
+  });
+});
+
+describe("recovery fields (Appendix C.1.3, rcan-spec #232)", () => {
+  const LEGGED: Envelope = read("assurance/envelope-legged-recovery.valid.json");
+  const ESTOP_AUTO = read("assurance/envelope-estop-auto-restart.invalid.json");
+  const RC: GateDecision[] = read("assurance/gate-decision-legged-recovery-chain.valid.json");
+  const firstWith = (c: GateDecision[], p: (r: GateDecision) => boolean) => c.findIndex(p);
+
+  test("the recovery chain verifies, audits and replays clean against its envelope", async () => {
+    expect(await verifyChain(RC)).toEqual([]);
+    expect(auditAuthority(RC, LEGGED)).toEqual([]);
+    expect(await replayAgainstEnvelope(RC, LEGGED)).toEqual([]);
+    const h = await envelopeHash(LEGGED);
+    for (const r of RC) expect(r.envelope).toBe(h);
+  });
+
+  test("the valid fixtures pass the recovery checks", () => {
+    expect(checkEnvelopeRecovery(LEGGED)).toEqual([]);
+    expect(checkStopFields(RC)).toEqual([]);
+    expect(checkEnvelopeRecovery(ENVELOPE)).toEqual([]);
+    expect(checkStopFields(CHAIN)).toEqual([]);
+  });
+
+  test("estop-auto-restart.invalid.json is rejected", () => {
+    expect(codes(checkEnvelopeRecovery(ESTOP_AUTO))).toEqual(["ESTOP_RESET_NOT_MANUAL"]);
+  });
+
+  test("escalates to a repeated stop after the envelope's declared count, not before", () => {
+    const rs = LEGGED.recovery!.repeated_stops!;
+    const n = rs.escalate_after_count!;
+    const i = firstWith(RC, (r) => r.stop_kind === "repeated");
+    const protective = RC.slice(0, i).filter((r) => r.stop_kind === "protective");
+    expect(protective).toHaveLength(n);
+    expect(protective[n - 1]!.t - protective[0]!.t).toBeLessThanOrEqual(rs.count_window_s! * 1000);
+  });
+
+  test("the optional fields are covered by the record hash", async () => {
+    const c = clone(RC);
+    c[3]!.stop_kind = "emergency";
+    expect(codes(await verifyChain(c))).toContain("HASH_MISMATCH");
+  });
+
+  test("a stop that applied motion is still flagged when it carries a stop_kind", async () => {
+    const c = clone(RC);
+    (c[3]!.applied as Record<string, number>).linear_mps = 0.1;
+    expect(codes(await replayAgainstEnvelope(c, LEGGED))).toContain("STOP_WITH_MOTION");
+  });
+
+  test("stop_kind only with stop, and only known values", () => {
+    let c = clone(RC);
+    const k = firstWith(c, (r) => r.decision === "allow");
+    c[k]!.stop_kind = "protective";
+    expect(checkStopFields(c).map((f) => [f.seq, f.code])).toEqual([[c[k]!.seq, "STOP_KIND_WITHOUT_STOP"]]);
+    c = clone(RC);
+    const j = firstWith(c, (r) => r.stop_kind !== undefined);
+    (c[j] as unknown as Record<string, unknown>).stop_kind = "soft";
+    expect(codes(checkStopFields(c))).toEqual(["BAD_STOP_KIND"]);
+  });
+
+  test("reason_returned is a boolean and never with allow", () => {
+    let c = clone(RC);
+    const k = firstWith(c, (r) => r.decision === "allow");
+    c[k]!.reason_returned = true;
+    expect(codes(checkStopFields(c))).toEqual(["REASON_RETURNED_WITH_ALLOW"]);
+    c = clone(RC);
+    const j = firstWith(c, (r) => r.reason_returned !== undefined);
+    (c[j] as unknown as Record<string, unknown>).reason_returned = "yes";
+    expect(codes(checkStopFields(c))).toEqual(["BAD_REASON_RETURNED"]);
+  });
+
+  test.each([
+    [{ on_reject: "retry" }, "BAD_ON_REJECT"],
+    [{ repeated_stops: {} }, "BAD_REPEATED_STOPS"],
+    [{ repeated_stops: { count_window_s: 60 } }, "BAD_REPEATED_STOPS"],
+    [{ repeated_stops: { escalate_after_count: 0 } }, "BAD_REPEATED_STOPS"],
+    [{ repeated_stops: { escalate_after_count: 2.5 } }, "BAD_REPEATED_STOPS"],
+    [{ repeated_stops: { escalate_after_count: true } }, "BAD_REPEATED_STOPS"],
+    [{ repeated_stops: { escalate_after_s: 0 } }, "BAD_REPEATED_STOPS"],
+    [{ repeated_stops: { escalate_after_s: 10, extra: 1 } }, "BAD_REPEATED_STOPS"],
+    [{ estop_reset: "automatic" }, "ESTOP_RESET_NOT_MANUAL"],
+    [{ resume: "auto" }, "BAD_RECOVERY"],
+  ])("recovery %j gives %s", (recovery, code) => {
+    expect(codes(checkEnvelopeRecovery({ ...clone(LEGGED), recovery }))).toEqual([code]);
+  });
+
+  test("either repeated-stop trigger is enough", () => {
+    for (const rs of [{ escalate_after_count: 3 }, { escalate_after_s: 120 }]) {
+      expect(checkEnvelopeRecovery({ ...clone(LEGGED), recovery: { repeated_stops: rs } })).toEqual([]);
+    }
+  });
+
+  test("safe_state must be non-empty when present", () => {
+    const e = clone(LEGGED);
+    e.stop.safe_state = "";
+    expect(codes(checkEnvelopeRecovery(e))).toEqual(["BAD_SAFE_STATE"]);
+    delete e.stop.safe_state;
+    expect(checkEnvelopeRecovery(e)).toEqual([]);
   });
 });
