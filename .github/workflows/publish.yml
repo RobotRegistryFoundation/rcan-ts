@@ -93,6 +93,8 @@ jobs:
   npm-publish:
     # OIDC Trusted Publishing — requires a trusted publisher registered on npmjs.com
     # for the rcan-ts package (org RobotRegistryFoundation, repo rcan-ts, workflow publish.yml).
+    # Check it with `npm trust list rcan-ts`; create it with
+    #   npm trust github rcan-ts --repository RobotRegistryFoundation/rcan-ts --file publish.yml --allow-publish
     # Trigger via Actions → Release → Run workflow → publish_npm=true.
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.publish_npm == 'true'
     needs: build-and-test
@@ -108,11 +110,20 @@ jobs:
           registry-url: https://registry.npmjs.org
           cache: npm
       - name: Upgrade npm for trusted publishing
-        run: npm install -g npm@latest   # OIDC requires npm CLI >= 11.5.1
+        run: |
+          npm install -g npm@latest   # OIDC requires npm CLI >= 11.5.1
+          npm --version
       - run: npm ci
       - run: npm run build
       - name: Publish to npm (OIDC — provenance is automatic)
-        run: npm publish --access public
+        id: publish
+        # At the default log level a failed OIDC token exchange is silent: npm falls back to
+        # setup-node's placeholder token and the registry answers E404. Verbose shows why.
+        run: npm publish --access public --loglevel verbose
+      - name: Explain a failed publish
+        if: failure() && steps.publish.outcome == 'failure'
+        run: |
+          echo "::error::npm publish failed. If the log above has 'oidc Failed token exchange', npmjs.com has no trusted publisher for rcan-ts that matches this run (repository RobotRegistryFoundation/rcan-ts, workflow publish.yml, no environment), so npm published with setup-node's placeholder token. Check it with: npm trust list rcan-ts"
 
   backfill-emit:
     name: Emit signed version-tuple envelope (backfill)
