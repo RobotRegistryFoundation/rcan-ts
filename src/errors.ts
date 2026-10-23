@@ -135,3 +135,18 @@ export class RCANConfigAuthorizationError extends RCANError {
     Object.setPrototypeOf(this, RCANConfigAuthorizationError.prototype);
   }
 }
+
+/**
+ * Thrown by canonicalJson for a value that has no canonical form (RFC 8785):
+ * NaN or Infinity ("non_finite_number"), or a string or member name with an
+ * unpaired surrogate ("invalid_string").
+ */
+export class RCANEncodingError extends RCANError {
+  public readonly code: "non_finite_number" | "invalid_string";
+  constructor(code: "non_finite_number" | "invalid_string", message: string) {
+    super(message);
+    this.name = "RCANEncodingError";
+    this.code = code;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
