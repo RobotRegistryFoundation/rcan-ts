@@ -237,7 +237,135 @@ describe("replay against the envelope", () => {
     const findings = await replayAgainstEnvelope(c, ENVELOPE);
     const unchecked = findings.filter((f) => f.code === "UNCHECKED_FIELDS");
     expect(unchecked).toEqual([
-      { seq: null, code: "UNCHECKED_FIELDS", detail: "applied.joint_torque_nm is not judged by this reference replay" },
+      {
+        seq: null,
+        code: "UNCHECKED_FIELDS",
+        field: "joint_torque_nm",
+        detail: "applied.joint_torque_nm is not judged by this reference replay",
+      },
+    ]);
+  });
+});
+
+// The checks below mirror RobotRegistryFoundation/rcan-spec#225, which adds them
+// to the reference verifier (scripts/assurance/evidence-chain.ts).
+
+describe("record shape is checked before anything is judged", () => {
+  const bad: [string, (c: Record<string, unknown>[]) => void][] = [
+    ["seq missing", (c) => delete c[1]!.seq],
+    ["seq a string", (c) => (c[1]!.seq = "1")],
+    ["seq negative", (c) => (c[0]!.seq = -1)],
+    ["seq a fraction", (c) => (c[1]!.seq = 1.5)],
+    ["record not an object", (c) => (c[1] = [] as unknown as Record<string, unknown>)],
+  ];
+  test.each(bad)("%s: every check throws TypeError", async (_name, mutate) => {
+    const c = clone(CHAIN) as unknown as Record<string, unknown>[];
+    mutate(c);
+    const chain = c as unknown as GateDecision[];
+    await expect(verifyChain(chain)).rejects.toThrow(TypeError);
+    expect(() => auditAuthority(chain, ENVELOPE)).toThrow(TypeError);
+    await expect(replayAgainstEnvelope(chain, ENVELOPE)).rejects.toThrow(TypeError);
+  });
+  test("verifyChain also needs string prev and hash", async () => {
+    const c = clone(CHAIN) as unknown as Record<string, unknown>[];
+    c[2]!.hash = 7;
+    await expect(verifyChain(c as unknown as GateDecision[])).rejects.toThrow(TypeError);
+  });
+});
+
+describe("authority is a non-empty string", () => {
+  const executed = (patch: Record<string, unknown>) => {
+    const c = clone(CHAIN).slice(0, 1) as unknown as Record<string, unknown>[];
+    Object.assign(c[0]!, patch);
+    return c as unknown as GateDecision[];
+  };
+  test("a number is not an authority", () => {
+    expect(codes(auditAuthority(executed({ authority: 5 }), ENVELOPE))).toEqual(["NO_AUTHORITY"]);
+  });
+  test("true is not a principal", () => {
+    expect(codes(auditAuthority(executed({ principal: true }), ENVELOPE))).toEqual(["NO_PRINCIPAL"]);
+  });
+  test("only an array of strings in required_for gates", () => {
+    const c = executed({ authority: null });
+    expect(auditAuthority(c, { authority: { required_for: "motion" } } as never)).toEqual([]);
+    expect(auditAuthority(c, { authority: ["motion"] } as never)).toEqual([]);
+    expect(codes(auditAuthority(c, { authority: { required_for: [1, "motion"] } } as never))).toEqual(["NO_AUTHORITY"]);
+  });
+});
+
+describe("replay checks the decision table (C.1.1, C.6)", () => {
+  // Records are edited without re-hashing: replay does not check hashes.
+  const at = (seq: number, patch: Record<string, unknown>, drop: string[] = []) => {
+    const c = clone(CHAIN) as unknown as Record<string, unknown>[];
+    Object.assign(c[seq]!, patch);
+    for (const k of drop) delete c[seq]![k];
+    return c as unknown as GateDecision[];
+  };
+  const replayCodes = async (c: GateDecision[], env: object = ENVELOPE) =>
+    (await replayAgainstEnvelope(c, env)).map((f) => (f.field ? `${f.code}:${f.field}` : f.code));
+
+  test("an allow that changed the command is flagged", async () => {
+    const applied = { ...(CHAIN[0]!.applied as object), linear_mps: 0.25 };
+    expect(await replayCodes(at(0, { applied }))).toEqual(["ALLOW_MODIFIED"]);
+  });
+  test("an allow equal to its command in another member order passes", async () => {
+    const { target, kind, angular_radps, linear_mps } = CHAIN[0]!.cmd as Record<string, unknown>;
+    expect(await replayCodes(at(0, { applied: { target, linear_mps, kind, angular_radps } }))).toEqual([]);
+  });
+  test("clamp, reject and stop without a reason are flagged", async () => {
+    expect(await replayCodes(at(1, {}, ["reason"]))).toEqual(["MISSING_REASON"]);
+    expect(await replayCodes(at(2, { reason: "" }))).toEqual(["MISSING_REASON"]);
+    expect(await replayCodes(at(4, {}, ["reason"]))).toEqual(["MISSING_REASON"]);
+  });
+  test("a reject with no applied member is flagged (absent is not null)", async () => {
+    expect(await replayCodes(at(2, {}, ["applied"]))).toEqual(["REJECT_APPLIED"]);
+  });
+  test("allow, clamp and stop must apply an object", async () => {
+    expect(await replayCodes(at(0, { applied: null }))).toEqual(["APPLIED_NOT_OBJECT"]);
+    expect(await replayCodes(at(1, { applied: [0.5] }))).toEqual(["APPLIED_NOT_OBJECT"]);
+    expect(await replayCodes(at(4, {}, ["applied"]))).toEqual(["APPLIED_NOT_OBJECT"]);
+  });
+  test("an unknown decision is flagged, not judged as allow", async () => {
+    expect(await replayCodes(at(0, { decision: "permit" }))).toEqual(["UNKNOWN_DECISION"]);
+  });
+});
+
+describe("replay judges only well-typed values", () => {
+  const withApplied = (patch: Record<string, unknown>) => {
+    const c = clone(CHAIN) as unknown as Record<string, unknown>[];
+    c[1]!.applied = { ...(c[1]!.applied as object), ...patch };
+    return c as unknown as GateDecision[];
+  };
+  const replayCodes = async (c: GateDecision[], env: object = ENVELOPE) =>
+    (await replayAgainstEnvelope(c, env)).map((f) => (f.field ? `${f.code}:${f.field}` : f.code));
+  const reenvelope = async (motion: object, workspace: object) => {
+    // Replay compares each record's envelope hash, so rebuild the records under the new one.
+    const env = { ...ENVELOPE, motion: { ...ENVELOPE.motion, ...motion }, workspace: { ...ENVELOPE.workspace, ...workspace } };
+    const h = await envelopeHash(env);
+    return { env, c: clone(CHAIN).map((r) => ({ ...r, envelope: h })) };
+  };
+
+  test("a bound written as a string is not used", async () => {
+    const { env, c } = await reenvelope({ max_speed_mps: "0.1" }, {});
+    expect(await replayCodes(c, env)).toEqual([]);
+  });
+  test("a two-point keep-out is not a polygon", async () => {
+    const { env, c } = await reenvelope({}, { keep_out: [[[0, 1], [10, 1]]] });
+    expect(await replayCodes(c, env)).toEqual([]);
+  });
+  test("a target that is not two finite numbers is unchecked, not tested", async () => {
+    expect(await replayCodes(withApplied({ target: ["99", 1] }))).toEqual(["UNCHECKED_FIELDS:target"]);
+  });
+  test("a speed written as a string is unchecked, not compared", async () => {
+    expect(await replayCodes(withApplied({ linear_mps: "9" }))).toEqual(["UNCHECKED_FIELDS:linear_mps"]);
+  });
+  test("unchecked names come once each, sorted by UTF-16 code units, with a field member", async () => {
+    const c = withApplied({ "\ue000": 1, "\ud83d\ude00": 1, gripper: 1, B: 1 });
+    expect(await replayCodes(c)).toEqual([
+      "UNCHECKED_FIELDS:B",
+      "UNCHECKED_FIELDS:gripper",
+      "UNCHECKED_FIELDS:\ud83d\ude00",
+      "UNCHECKED_FIELDS:\ue000",
     ]);
   });
 });
